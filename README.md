@@ -33,13 +33,13 @@ O ecossistema é centralizado em um único servidor físico executando o **Proxm
 
 ## 📖 Passo a Passo de Infraestrutura
 
-### Transição de IP Estático para IP Dinâmico (DHCP) no Proxmox
-Para alterar a interface de rede do Proxmox para obter IP via DHCP, edite o arquivo de configuração de rede:
+### Fase 1: Configuração Base de Rede no Proxmox Host
+Para alterar a interface de rede do Proxmox para obter IP dinâmico via DHCP, acesse o shell do host e edite o arquivo de configuração de rede:
 
 ```bash
 nano /etc/network/interfaces
 ````
-## Deixe o bloco da ponte principal (vmbr0) com a seguinte estrutura:
+### Deixe o bloco da ponte principal (vmbr0) com a seguinte estrutura:
 ```text
 auto vmbr0
 iface vmbr0 inet dhcp
@@ -47,24 +47,43 @@ iface vmbr0 inet dhcp
         bridge-stp off
         bridge-fd 0
 ```
-## Para aplicar as configurações de rede sem reiniciar o host:
+### Para aplicar as configurações de rede sem reiniciar o host:
 ```bash
 ifreload -a
 ```
-## Mapeamento Físico dos HDDs WD Purple (Passthrough por ID)
-Execute os comandos no shell do Proxmox para atrelar os discos diretamente à VM 100 do TrueNAS SCALE:
+Fase 2 e 3: Vinculação Física dos HDDs WD Purple (Passthrough por ID)
+Execute os comandos abaixo no shell do Proxmox Host (root@pvs) para atrelar os discos rígidos diretamente à VM 100 do TrueNAS SCALE:
 ```bash
 qm set 100 -scsi1 /dev/disk/by-id/ata-WDC_WD20PURZ-85AKKY0_WD-WX22D51LJUYN
 qm set 100 -scsi2 /dev/disk/by-id/ata-WDC_WD20PURZ-85B4ZY0_WD-WXH2D43DKNTN
-```
-## Configuração de Passthrough de GPU AMD RX 580 para LXC
-Para liberar a aceleração de hardware aos containers LXC, adicione as seguintes linhas ao final do arquivo de configuração do seu container no Proxmox (ex: /etc/pve/lxc/101.conf):
+````
+### ⚠️ Correção Crítica: Emulação de Número de Série (Evitar erro de topologia no TrueNAS)
+O TrueNAS SCALE exige números de série válidos e únicos para construir a topologia ZFS. Como o barramento virtual padrão do Proxmox mascara os seriais físicos (gerando erro de "duplicate serial numbers: None"), é obrigatório injetar um serial manual.
+
+Acesse o arquivo de configuração da VM 100 pelo terminal do Proxmox:
+````bash
+nano /etc/pve/qemu-server/100.conf
+````
+### Localize as linhas correspondentes ao scsi1 e scsi2 e adicione o argumento ,serial=... ao final de cada uma delas, conforme o exemplo abaixo:
 ```text
-lxc.cgroup2.devices.allow: c 226:0 rwm
-lxc.cgroup2.devices.allow: c 226:128 rwm
-lxc.mount.entry: /dev/dri/card0 dev/dri/card0 none bind,optional,create=file
-lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file
-```
+scsi1: /dev/disk/by-id/ata-WDC_WD20PURZ-85AKKY0_WD-WX22D51LJUYN,size=2000G,serial=WDPURPLE01
+scsi2: /dev/disk/by-id/ata-WDC_WD20PURZ-85B4ZY0_WD-WXH2D43DKNTN,size=2000G,serial=WDPURPLE02
+````
+### Salve o arquivo (Ctrl+O, Enter, Ctrl+X) e realize um Shutdown/Power On completo na VM 100 pelo painel do Proxmox antes de prosseguir.
+
+## 💾 Fase 4: Configuração do TrueNAS SCALE (ZFS Mirror / RAID-1)
+Com a VM do TrueNAS inicializada e os dois discos de 2TB conectados com sucesso via hardware passthrough, siga os passos abaixo dentro do painel web do TrueNAS:
+1. Criação do Pool de Armazenamento
+* No manu lateral esquerdo, acesse Storage e clique em Disks ao lado de Import Pool
+* Expanda da linha (Expand Row) clicando em cima do disco a ser usado, limpe o mesmo clicando em Wipe
+* Faça essa limpeza em todos os discos a serem usados.
+* No menu lateral esquerdo, acesse Storage e clique em Create Pool.
+* Dê um nome para o seu pool (ex: pool-dados).
+* Em Layout, selecione a opção Mirror (equivalente ao RAID-1, garantindo redundância imediata).
+* Na lista de discos disponíveis, selecione os dois drives de 2TB (WDC_WD20PURZ) e mova-os para a seção do VDEV de dados (Data VDEVs).
+* No restante das opções apenas avance clicando em Next e por fim em Create Pool.
+
+Clique em Create e confirme a formatação dos discos.
 ### 🐳 Configuração do Ambiente Docker & Portainer
 1. Atualizar Repositórios e Dependências do Sistema (Dentro do LXC)
 Execute o comando abaixo no terminal do seu container para preparar as ferramentas necessárias:
