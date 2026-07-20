@@ -73,13 +73,22 @@ iface vmbr1 inet manual
 ```bash
 ifreload -a
 ```
-### Fase 2 e 3: Vinculação Física dos HDDs WD Purple (Passthrough por ID)
-Execute os comandos abaixo no shell do Proxmox Host (root@pvs) para atrelar os discos rígidos diretamente à VM 100 do TrueNAS SCALE:
+### Fase 2 e 3: Mapeamento e Vinculação Física dos HDDs para a VM do TrueNAS
+🔍 1. Listar os IDs Físicos dos Discos no Servidor
+Como o ID de hardware altera conforme o modelo e fabricante do disco instalado, mapeie previamente os IDs dos discos no terminal do Proxmox Host:
+```bash
+ls -l /dev/disk/by-id/
+```
+Identifique os dois discos destinados ao armazenamento de dados (ignore partições como -part1 ou discos de boot). Copie o caminho completo que começa com ata-... ou sata-....
+
+🔗 2. Atrelar os Discos à VM 100 (Passthrough por ID)
+Execute os comandos trocando os caminhos abaixo pelos IDs capturados no passo anterior:
+
 ````bash
-qm set 100 -scsi1 /dev/disk/by-id/ata-WDC_WD20PURZ-85AKKY0_WD-WX22D51LJUYN
-qm set 100 -scsi2 /dev/disk/by-id/ata-WDC_WD20PURZ-85B4ZY0_WD-WXH2D43DKNTN
+qm set 100 -scsi1 /dev/disk/by-id/ID_DO_SEU_DISCO_1
+qm set 100 -scsi2 /dev/disk/by-id/ID_DO_SEU_DISCO_2
 ````
-### ⚠️ Correção Crítica: Emulação de Número de Série (Evitar erro de topologia no TrueNAS)
+### ⚠️ 3. Correção Crítica: Emulação de Número de Série (Evitar erro de topologia no TrueNAS)
 O TrueNAS SCALE exige números de série válidos e únicos para construir a topologia ZFS. Como o barramento virtual padrão do Proxmox mascara os seriais físicos (gerando erro de "duplicate serial numbers: None"), é obrigatório injetar um serial manual.
 
 Acesse o arquivo de configuração da VM 100 pelo terminal do Proxmox:
