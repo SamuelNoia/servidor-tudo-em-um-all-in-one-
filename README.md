@@ -9,6 +9,11 @@ O ecossistema é centralizado em um único servidor físico executando o **Proxm
 2. **Serviços e Containers:** O próprio Proxmox hospeda os containers (LXC). A placa de vídeo física (GPU) é compartilhada diretamente com os containers do host para aceleração de hardware e transcodificação de mídia.
 3. **Orquestração de Aplicações:** Dentro do container principal, o **Docker** e o **Portainer** gerenciam os microsserviços da empresa, utilizando **volumes persistentes amarrados ao RAID de dados do TrueNAS**.
 
+### 🌐 Topologia de Rede Híbrida (Resiliência Total)
+Para garantir máxima tolerância a falhas e desempenho, o ambiente utiliza duas pontes de rede virtuais (Bridges):
+*   **`vmbr0` (Rede Local / Acesso Externo):** Atrelada à placa de rede física do servidor. Permite que você acesse a interface do TrueNAS e os computadores da empresa consumam os serviços dos containers.
+*   **`vmbr1` (Rede de Dados Isolada):** Uma ponte puramente virtual (sem placa física atrelada). O tráfego NFS entre o Docker e o TrueNAS trafega por aqui na velocidade da memória RAM. **Se o switch físico da empresa queimar ou for desligado, os containers e o TrueNAS continuam conversando internamente sem interrupções.**
+
 ---
 
 ## 🛠️ Especificações de Armazenamento e Hardware
@@ -22,19 +27,19 @@ O ecossistema é centralizado em um único servidor físico executando o **Proxm
 
 ## 🚀 Cronograma de Implementação
 
-- [x] **Fase 1:** Instalação do Proxmox VE 9.2 no SSD SATA & Ajuste de Rede para DHCP.
+- [x] **Fase 1:** Instalação do Proxmox VE 9.2 no SSD SATA & Ajuste de Rede Híbrida (`vmbr0` e `vmbr1`).
 - [x] **Fase 2:** Criação da VM do TrueNAS SCALE (VM 100) utilizando o Storage NVMe para Boot (32GB).
-- [x] **Fase 3:** Passthrough físico por ID dos 2x HDDs WD Purple de 2TB para a VM 100.
-- [x] **Fase 4:** Configuração do Armazenamento (ZFS Mirror) no TrueNAS SCALE.
+- [x] **Fase 3:** Passthrough físico por ID dos 2x HDDs WD Purple de 2TB para a VM 100 + Emulação de Seriais.
+- [x] **Fase 4:** Configuração do Armazenamento (ZFS Mirror) no TrueNAS SCALE e Exportação NFS via Rede Isolada.
 - [x] **Fase 5:** Configuração do Driver AMD no Host Proxmox e Passthrough de GPU para Containers LXC.
-- [ ] **Fase 6:** Instalação do Docker + Portainer com Persistência no Storage RAID do TrueNAS.
+- [ ] **Fase 6:** Instalação do Docker + Portainer com Persistência no Storage RAID do TrueNAS via Rede Isolada.
 
 ---
 
 ## 📖 Passo a Passo de Infraestrutura
 
-### Fase 1: Configuração Base de Rede no Proxmox Host
-Para alterar a interface de rede do Proxmox para obter IP dinâmico via DHCP, acesse o shell do host e edite o arquivo de configuração de rede:
+### Fase 1: Configuração das Pontes de Rede no Proxmox Host
+Para criar o ambiente com a rede física padrão e a rede interna isolada, acesse o shell do host Proxmox e edite as interfaces:
 
 ```bash
 nano /etc/network/interfaces
