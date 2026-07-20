@@ -33,18 +33,22 @@ Para garantir máxima tolerância a falhas e desempenho, o ambiente utiliza duas
 - [x] **Fase 4:** Configuração do Armazenamento (ZFS Mirror) no TrueNAS SCALE e Exportação NFS via Rede Isolada.
 - [x] **Fase 5:** Configuração do Driver AMD no Host Proxmox e Passthrough de GPU para Containers LXC.
 - [ ] **Fase 6:** Instalação do Docker + Portainer com Persistência no Storage RAID do TrueNAS via Rede Isolada.
-
 ---
-
 ## 📖 Passo a Passo de Infraestrutura
 
 ### Fase 1: Configuração das Pontes de Rede no Proxmox Host
-Para criar o ambiente com a rede física padrão e a rede interna isolada, acesse o shell do host Proxmox e edite as interfaces:
 
+#### 🔍 1. Identificar o Nome Real da Interface Física
+Antes de editar o arquivo de rede, verifique o identificador exato que o Linux atribuiu à sua placa de rede física. No terminal do Proxmox Host, execute:
+```bash
+ip a
+```
+### 2. Configuração das Pontes de Rede no Proxmox Host
+Para criar o ambiente com a rede física padrão e a rede interna isolada, acesse o shell do host Proxmox e edite as interfaces:
 ```bash
 nano /etc/network/interfaces
 ````
-### Deixe o bloco da ponte principal (vmbr0) com a seguinte estrutura:
+### 3. Deixe o bloco da ponte principal (vmbr0) com a seguinte estrutura:
 ```text
 auto lo
 iface lo inet loopback
@@ -65,7 +69,7 @@ iface vmbr1 inet manual
         bridge-stp off
         bridge-fd 0
 ```
-### Aplique a nova configuração de rede sem reiniciar o servidor físico:
+### 4. Aplique a nova configuração de rede sem reiniciar o servidor físico:
 ```bash
 ifreload -a
 ```
