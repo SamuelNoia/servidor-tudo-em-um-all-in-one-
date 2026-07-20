@@ -46,19 +46,32 @@ nano /etc/network/interfaces
 ````
 ### Deixe o bloco da ponte principal (vmbr0) com a seguinte estrutura:
 ```text
+auto lo
+iface lo inet loopback
+
+iface enp3s0 inet manual
+
+# REDE LOCAL DA EMPRESA (Acesso aos Painéis e Serviços)
 auto vmbr0
 iface vmbr0 inet dhcp
         bridge-ports enp3s0
         bridge-stp off
         bridge-fd 0
+
+# REDE VIRTUAL ISOLADA (Tráfego de Dados NFS Interno - Anti-Queda)
+auto vmbr1
+iface vmbr1 inet manual
+        bridge-ports none
+        bridge-stp off
+        bridge-fd 0
 ```
-### Para aplicar as configurações de rede sem reiniciar o host:
+### Aplique a nova configuração de rede sem reiniciar o servidor físico:
 ```bash
 ifreload -a
 ```
-Fase 2 e 3: Vinculação Física dos HDDs WD Purple (Passthrough por ID)
+### Fase 2 e 3: Vinculação Física dos HDDs WD Purple (Passthrough por ID)
 Execute os comandos abaixo no shell do Proxmox Host (root@pvs) para atrelar os discos rígidos diretamente à VM 100 do TrueNAS SCALE:
-```bash
+````bash
 qm set 100 -scsi1 /dev/disk/by-id/ata-WDC_WD20PURZ-85AKKY0_WD-WX22D51LJUYN
 qm set 100 -scsi2 /dev/disk/by-id/ata-WDC_WD20PURZ-85B4ZY0_WD-WXH2D43DKNTN
 ````
@@ -76,38 +89,75 @@ scsi2: /dev/disk/by-id/ata-WDC_WD20PURZ-85B4ZY0_WD-WXH2D43DKNTN,size=2000G,seria
 ````
 ### Salve o arquivo (Ctrl+O, Enter, Ctrl+X) e realize um Shutdown/Power On completo na VM 100 pelo painel do Proxmox antes de prosseguir.
 
-## 💾 Fase 4: Configuração do TrueNAS SCALE (ZFS Mirror / RAID-1)
-Com a VM do TrueNAS inicializada e os dois discos de 2TB conectados com sucesso via hardware passthrough, siga os passos abaixo dentro do painel web do TrueNAS:
-1. Criação do Pool de Armazenamento
-* No manu lateral esquerdo, acesse Storage e clique em Disks ao lado de Import Pool
-* Expanda da linha (Expand Row) clicando em cima do disco a ser usado, limpe o mesmo clicando em Wipe
-* Faça essa limpeza em todos os discos a serem usados.
-* No menu lateral esquerdo, acesse Storage e clique em Create Pool.
-* Dê um nome para o seu pool (ex: pool-dados).
-* Em Layout, selecione a opção Mirror (equivalente ao RAID-1, garantindo redundância imediata).
-* Na lista de discos disponíveis, selecione os dois drives de 2TB (WDC_WD20PURZ) e mova-os para a seção do VDEV de dados (Data VDEVs).
-* No restante das opções apenas avance clicando em Next e por fim em Create Pool.
+## 💾 Fase 4: Configuração do TrueNAS SCALE (ZFS Mirror & Rede)
+1. Ajuste de Interfaces de Rede no TrueNAS
+Certifique-se de adicionar duas placas de rede à VM 100 através da interface gráfica do Proxmox (uma atrelada à vmbr0 e outra à vmbr1). Dentro da interface web do TrueNAS, configure:
+* Interface da vmbr0: Deixe em DHCP (ou defina o IP estático da sua rede local para acessá-lo, ex: 192.168.1.250).
+* Interface da vmbr1: Defina como IP Estático Fixo: 10.0.0.250 com máscara /24 (255.255.255.0). Não configure Gateway nesta interface.
+2. Criação do Pool de Armazenamento
+ * No manu lateral esquerdo, acesse Storage e clique em Disks ao lado de Import Pool
+ * Expanda da linha (Expand Row) clicando em cima do disco a ser usado, limpe o mesmo clicando em Wipe
+ * Faça essa limpeza em todos os discos a serem usados.
+ * No menu lateral esquerdo, acesse Storage e clique em Create Pool.
+ * Dê um nome para o seu pool (ex: pool-dados).
+ * Em Layout, selecione a opção Mirror (equivalente ao RAID-1).
+ * Selecione os dois drives de 2TB (WDC_WD20PURZ) identificados pelos seriais WDPURPLE01 e WDPURPLE02 e mova-os para a seção do VDEV de dados (Data VDEVs).
+ * Clique em Create e confirme a formatação.
+ * Com a VM do TrueNAS inicializada e os dois discos de 2TB conectados com sucesso via hardware passthrough, siga os passos abaixo dentro do painel web do TrueNAS:
+3. Criação do Dataset e Compartilhamento NFS Seguro
+ * Clique nos três pontos ao lado do pool criado e escolha Add Dataset. Nomeie como docker-volumes.
+ * Acesse o menu Shares na barra lateral, vá em Unix (NFS) Shares e clique em Add.
+ * Aponte para o caminho do seu dataset (ex: /mnt/pool-dados/docker-volumes).
+ * Segurança Avançada: Nas configurações do compartilhamento, em Authorized Networks, preencha com 10.0.0.0/24. Isso garante que apenas a rede interna virtual isolada consiga montar o disco, bloqueando qualquer invasão vinda da rede local de computadores comuns.
+### 📦 Fase 5: Criação do Container LXC e Passthrough de GPU AMD RX 580
+1. Criação do Container e Configuração de Rede Dupla
+No canto superior direito do Proxmox, clique em Create CT e configure o container seguindo estes parâmetros críticos:
+ * Aba General: Desmarque a caixa Unprivileged container (o container deve ser Privilegiado para permitir o mapeamento de hardware e montagem NFS).
+ * Aba Network:
+    * Placa eth0: Atrele à vmbr0 (Rede local) configurada em DHCP ou IP Fixo da sua LAN.
+    * Placa eth1 (Adicione após criar ou na aba avançada): Atrele à vmbr1 (Rede Virtual Isolada) com o IP Estático Fixo 10.0.0.100/24. Sem Gateway.
+ * Aba Options (Após a criação): Vá em Features, clique em Edit e marque obrigatoriamente as caixas keyctl e nesting.
 
-Clique em Create e confirme a formatação dos discos.
-### 🐳 Configuração do Ambiente Docker & Portainer
+2. Configuração de Passthrough de GPU AMD RX 580 para o LXC
+Acesse o shell do Proxmox Host e abra o arquivo de configuração do container recém-criado (substitua 101 pelo ID real do seu container):
+```bash
+nano /etc/pve/lxc/101.conf
+```
+Adicione as seguintes linhas ao final do arquivo para liberar os nós de renderização de hardware de forma compartilhada:
+```text
+lxc.cgroup2.devices.allow: c 226:0 rwm
+lxc.cgroup2.devices.allow: c 226:128 rwm
+lxc.mount.entry: /dev/dri/card0 dev/dri/card0 none bind,optional,create=file
+lxc.mount.entry: /dev/dri/renderD128 dev/dri/renderD128 none bind,optional,create=file
+````
+
+   
+### 🐳 Fase 6: Configuração do Ambiente Docker & Portainer
 1. Atualizar Repositórios e Dependências do Sistema (Dentro do LXC)
-Execute o comando abaixo no terminal do seu container para preparar as ferramentas necessárias:
+Inicie o Container LXC, abra o Console dele e prepare o ambiente:
 ```bash
 apt update && apt install -y curl cifs-utils nfs-common
 ````
-### 2. Instalação Automatizada do Docker Engine
-Execute o script oficial para instalar o Docker e o Docker Compose dentro do container LXC:
+2. Instalação Automatizada do Docker Engine
+Execute o script oficial dentro do terminal do container para instalar o Docker e o Docker Compose:
 ````bash
-curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
+curl -fsSL [https://get.docker.com](https://get.docker.com) -o get-docker.sh && sh get-docker.sh
 ````
-### 3. Criação da Pasta da Aplicação
-Crie o diretório onde ficará o arquivo de deploy do Portainer:
+3. Montagem do Volume Persistente via Rede Isolada
+Crie a pasta local dentro do container onde o storage do TrueNAS será mapeado:
+````bash
+mkdir -p /mnt/storage-truenas
+````
+Para realizar o mapeamento seguro usando o caminho IP da rede virtual interna (que nunca cai):
+```bash
+mount -t nfs 10.0.0.250:/mnt/pool-dados/docker-volumes /mnt/storage-truenas
+```
+(Para tornar essa montagem permanente mesmo após reiniciar o container, adicione a linha correspondente dentro do arquivo /etc/fstab do LXC).
+
+4. Inicialização do Portainer
+Crie o diretório do Portainer e inicialize a aplicação apontando seus volumes para a pasta mapeada /mnt/storage-truenas, garantindo a persistência resiliente aos desligamentos de rede física.
 ````bash
 mkdir -p /opt/portainer && cd /opt/portainer
-````
-### 4. Inicialização do Portainer
-Após criar o arquivo docker-compose.yml na pasta (conforme modelo no repositório), suba o container em segundo plano com o seguinte comando:
-````bash
 docker compose up -d
 ````
 
