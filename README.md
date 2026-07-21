@@ -122,14 +122,58 @@ Certifique-se de adicionar duas placas de rede à VM 100 através da interface g
  * Acesse o menu Shares na barra lateral, vá em Unix (NFS) Shares e clique em Add.
  * Aponte para o caminho do seu dataset (ex: /mnt/pool-dados/docker-volumes).
  * Segurança Avançada: Nas configurações do compartilhamento, em Authorized Networks, preencha com 10.0.0.0/24. Isso garante que apenas a rede interna virtual isolada consiga montar o disco, bloqueando qualquer invasão vinda da rede local de computadores comuns.
-### 📦 Fase 5: Criação do Container LXC e Passthrough de GPU AMD RX 580
+### 📦 Fase 5: Criação do Container LXC Base, Docker & Portainer
 1. Criação do Container e Configuração de Rede Dupla
-No canto superior direito do Proxmox, clique em Create CT e configure o container seguindo estes parâmetros críticos:
- * Aba General: Desmarque a caixa Unprivileged container (o container deve ser Privilegiado para permitir o mapeamento de hardware e montagem NFS).
+No canto superior direito do Proxmox, clique em Create CT e configure o container de orquestração:
+ * Aba General: Desmarque a caixa Unprivileged container (o container deve ser Privilegiado para permitir montagens NFS).
  * Aba Network:
-    * Placa eth0: Atrele à vmbr0 (Rede local) configurada em DHCP ou IP Fixo da sua LAN.
-    * Placa eth1 (Adicione após criar ou na aba avançada): Atrele à vmbr1 (Rede Virtual Isolada) com o IP Estático Fixo 10.0.0.100/24. Sem Gateway.
- * Aba Options (Após a criação): Vá em Features, clique em Edit e marque obrigatoriamente as caixas keyctl e nesting.
+ * Placa eth0: Atrele à vmbr0 (Rede local) configurada em DHCP ou IP Fixo da sua LAN.
+ * Placa eth1: Atrele à vmbr1 (Rede Virtual Isolada) com o IP Estático Fixo 10.0.0.100/24. Sem Gateway.
+ * Aba Options (Após a criação): Vá em Features, clique em Edit e marque obrigatoriamente as caixas keyctl e nesting (necessário para o Docker rodar aninhado).
+ * baixe um template, o ubuntu-24.04-standard é uma boa opção
+2. Preparação do Sistema e Instalação do Docker (Dentro do LXC)
+Inicie o Container LXC, abra o Console dele e execute:
+```bash
+apt update && apt install -y curl cifs-utils nfs-common
+curl -fsSL [https://get.docker.com](https://get.docker.com) -o get-docker.sh && sh get-docker.sh
+```
+3. Montagem do Volume Persistente do TrueNAS via Rede Isolada
+Crie o ponto de montagem interno e conecte ao NFS do TrueNAS via rede 10.0.0.x:
+```bash
+mkdir -p /mnt/storage-truenas
+mount -t nfs 10.0.0.250:/mnt/pool-dados/docker-volumes /mnt/storage-truenas
+```
+(Para garantir que a montagem persista ao reiniciar o container, adicione a linha 10.0.0.250:/mnt/pool-dados/docker-volumes /mnt/storage-truenas nfs defaults 0 0 no arquivo /etc/fstab do container).
+
+4. Inicialização do Portainer
+Crie o diretório do Portainer e inicialize o serviço:
+```bash
+mkdir -p /opt/portainer && cd /opt/portainer
+```
+Crie o arquivo docker-compose.yml:
+```bash
+nano docker-compose.yml
+```
+Cole o conteúdo de deploy básico do Portainer:
+```YAML
+version: '3.8'
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: always
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/storage-truenas/portainer_data:/data
+```
+Suba o container do Portainer:
+```bash
+docker compose up -d
+```
+Pronto para subir o container LXC limpo do Docker + Portainer nessa estrutura.
 
 2. Configuração de Passthrough de GPU AMD RX 580 para o LXC
 Acesse o shell do Proxmox Host e abra o arquivo de configuração do container recém-criado (substitua 101 pelo ID real do seu container):
